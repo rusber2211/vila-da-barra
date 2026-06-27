@@ -15,24 +15,28 @@ const LIMITES = {
 };
 
 const CHAVE_HISTORICO = "vilaDaBarra_historico";
+const CHAVE_ESTADO = "vilaDaBarra_estado";
 
 let scoreA = 0;
 let scoreB = 0;
 let contador = 1;
 let jogadorSelecionado = null;
+let saqueAtual = "A";
 
 // ===== CRIAR JOGADOR (número de camisa fixo, criado uma vez só) =====
-function criarPlayer(nome) {
+function criarPlayerComNumero(nome, numero, jogando) {
   const el = document.createElement("div");
   el.className = "player";
   el.dataset.nome = nome.trim().toLowerCase();
   el.dataset.nomeOriginal = nome.trim();
 
-  const numero = document.createElement("span");
-  numero.className = "numero";
-  numero.textContent = contador++;
-  el.appendChild(numero);
+  const numeroEl = document.createElement("span");
+  numeroEl.className = "numero";
+  numeroEl.textContent = numero;
+  el.appendChild(numeroEl);
   el.appendChild(document.createTextNode(nome.trim()));
+
+  if (jogando) el.classList.add("jogando");
 
   el.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -40,6 +44,10 @@ function criarPlayer(nome) {
   });
 
   return el;
+}
+
+function criarPlayer(nome) {
+  return criarPlayerComNumero(nome, contador++, false);
 }
 
 function nomeJaExiste(nome) {
@@ -61,6 +69,7 @@ function addPlayer() {
   areas.fila.appendChild(criarPlayer(nome));
   input.value = "";
   atualizarFila();
+  salvarEstado();
 }
 
 // ===== SELEÇÃO (clique pra selecionar, clique na área pra mover) =====
@@ -106,6 +115,7 @@ function moverJogador(areaDestino) {
 
   atualizarFila();
   atualizarContadores();
+  salvarEstado();
 }
 
 // ===== LIXEIRA (remove de vez, qualquer jogador, qualquer área) =====
@@ -115,6 +125,7 @@ lixeira.addEventListener("click", () => {
     jogadorSelecionado = null;
     atualizarFila();
     atualizarContadores();
+    salvarEstado();
   }
 });
 
@@ -144,18 +155,22 @@ function addPonto(time) {
   if (time === "A") scoreA++;
   else scoreB++;
   atualizarPlacar();
+  salvarEstado();
 }
 
 function removerPonto(time) {
   if (time === "A") { if (scoreA > 0) scoreA--; }
   else { if (scoreB > 0) scoreB--; }
   atualizarPlacar();
+  salvarEstado();
 }
 
 // ===== INDICADOR DE SAQUE =====
 function definirSaque(time) {
+  saqueAtual = time;
   document.getElementById("placarA").classList.toggle("sacando", time === "A");
   document.getElementById("placarB").classList.toggle("sacando", time === "B");
+  salvarEstado();
 }
 
 // ===== CRONÔMETRO =====
@@ -172,6 +187,7 @@ function iniciarPausarCronometro() {
     intervaloCronometro = setInterval(() => {
       segundosPartida++;
       atualizarCronometro();
+      salvarEstado();
     }, 1000);
     btn.textContent = "⏸";
   }
@@ -183,6 +199,7 @@ function resetarCronometro() {
   segundosPartida = 0;
   atualizarCronometro();
   document.getElementById("btnCronometro").textContent = "▶";
+  salvarEstado();
 }
 
 function atualizarCronometro() {
@@ -193,6 +210,71 @@ function tempoFormatado() {
   const m = String(Math.floor(segundosPartida / 60)).padStart(2, "0");
   const s = String(segundosPartida % 60).padStart(2, "0");
   return `${m}:${s}`;
+}
+
+// ===== ESTADO DA PARTIDA ATUAL (jogadores, placar, cronômetro, saque) =====
+function coletarJogadoresDeArea(areaId) {
+  const area = areas[areaId];
+  return [...area.querySelectorAll(".player")].map(p => ({
+    nome: p.dataset.nomeOriginal,
+    numero: p.querySelector(".numero").textContent,
+    jogando: p.classList.contains("jogando")
+  }));
+}
+
+function salvarEstado() {
+  const estado = {
+    contador,
+    scoreA,
+    scoreB,
+    segundosPartida,
+    saqueAtual,
+    areas: {
+      fila: coletarJogadoresDeArea("fila"),
+      timeA: coletarJogadoresDeArea("timeA"),
+      timeB: coletarJogadoresDeArea("timeB"),
+      marcacao: coletarJogadoresDeArea("marcacao"),
+      eliminados: coletarJogadoresDeArea("eliminados")
+    }
+  };
+  try {
+    localStorage.setItem(CHAVE_ESTADO, JSON.stringify(estado));
+  } catch (err) {
+    console.log("Erro ao salvar estado:", err);
+  }
+}
+
+function restaurarEstado() {
+  let estado = null;
+  try {
+    estado = JSON.parse(localStorage.getItem(CHAVE_ESTADO));
+  } catch {
+    estado = null;
+  }
+
+  if (!estado) {
+    definirSaque("A");
+    return;
+  }
+
+  contador = estado.contador || 1;
+  scoreA = estado.scoreA || 0;
+  scoreB = estado.scoreB || 0;
+  segundosPartida = estado.segundosPartida || 0;
+
+  Object.entries(estado.areas || {}).forEach(([areaId, lista]) => {
+    const area = areas[areaId];
+    if (!area) return;
+    lista.forEach(j => {
+      area.appendChild(criarPlayerComNumero(j.nome, j.numero, j.jogando));
+    });
+  });
+
+  atualizarPlacar();
+  atualizarCronometro();
+  atualizarFila();
+  atualizarContadores();
+  definirSaque(estado.saqueAtual || "A");
 }
 
 // ===== HISTÓRICO E RANKING (salvos no próprio celular, 100% offline) =====
@@ -282,6 +364,135 @@ function renderRanking() {
     .join("");
 }
 
+// ===== EXPORTAR RANKING (imagem simples, pronta pra compartilhar no WhatsApp) =====
+async function exportarHistorico() {
+  const ranking = calcularRanking();
+
+  if (ranking.length === 0) {
+    alert("Ainda não há vitórias registradas para exportar.");
+    return;
+  }
+
+  const blob = await gerarImagemRanking(ranking);
+  const arquivo = new File([blob], "ranking-vila-da-barra.png", { type: "image/png" });
+
+  if (navigator.canShare && navigator.canShare({ files: [arquivo] })) {
+    try {
+      await navigator.share({
+        files: [arquivo],
+        title: "Ranking Vila da Barra",
+        text: "🏆 Ranking de vitórias da Vila da Barra"
+      });
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return; // usuário cancelou o compartilhamento
+    }
+  }
+
+  // sem suporte a compartilhamento direto: baixa a imagem pra enviar manualmente
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "ranking-vila-da-barra.png";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function gerarImagemRanking(ranking) {
+  return new Promise(resolve => {
+    const top3 = ranking.slice(0, 3);
+    const resto = ranking.slice(3);
+
+    const largura = 1080;
+    const alturaTopo = 360;
+    const alturaLinhaResto = 80;
+    const alturaRodape = 80;
+    const altura = alturaTopo + (resto.length ? 70 + resto.length * alturaLinhaResto : 0) + alturaRodape;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = largura;
+    canvas.height = altura;
+    const ctx = canvas.getContext("2d");
+
+    // fundo
+    ctx.fillStyle = "#0b3d52";
+    ctx.fillRect(0, 0, largura, altura);
+
+    // título
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 56px Arial";
+    ctx.fillText("🏆 Vila da Barra", largura / 2, 80);
+    ctx.font = "32px Arial";
+    ctx.fillStyle = "#bcd6e0";
+    ctx.fillText("Ranking de Vitórias", largura / 2, 130);
+
+    // pódio (top 3)
+    const medalhas = ["🥇", "🥈", "🥉"];
+    const coresPodio = ["#ffd700", "#c0c0c0", "#cd7f32"];
+    const larguraBloco = largura / top3.length;
+    const topoY = 190;
+
+    top3.forEach((j, i) => {
+      const cx = larguraBloco * i + larguraBloco / 2;
+
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = coresPodio[i];
+      ctx.fillRect(cx - larguraBloco / 2 + 15, topoY, larguraBloco - 30, 170);
+      ctx.globalAlpha = 1;
+
+      ctx.textAlign = "center";
+      ctx.font = "64px Arial";
+      ctx.fillText(medalhas[i], cx, topoY + 70);
+
+      ctx.font = "bold 30px Arial";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(j.nome, cx, topoY + 115);
+
+      ctx.font = "24px Arial";
+      ctx.fillStyle = coresPodio[i];
+      ctx.fillText(`${j.vitorias} ${j.vitorias === 1 ? "vitória" : "vitórias"}`, cx, topoY + 150);
+    });
+
+    // demais colocações
+    let y = alturaTopo + 40;
+    if (resto.length > 0) {
+      ctx.textAlign = "left";
+      ctx.font = "28px Arial";
+      ctx.fillStyle = "#bcd6e0";
+      ctx.fillText("Demais colocações", 60, y);
+      y += 50;
+
+      resto.forEach((j, i) => {
+        const posicao = i + 4;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 28px Arial";
+        ctx.fillText(`${posicao}º`, 60, y);
+
+        ctx.font = "28px Arial";
+        ctx.fillText(j.nome, 150, y);
+
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#bcd6e0";
+        ctx.fillText(`${j.vitorias} ${j.vitorias === 1 ? "vitória" : "vitórias"}`, largura - 60, y);
+        ctx.textAlign = "left";
+
+        y += alturaLinhaResto;
+      });
+    }
+
+    // rodapé
+    ctx.textAlign = "center";
+    ctx.font = "20px Arial";
+    ctx.fillStyle = "#7da7bb";
+    const dataAtual = new Date().toLocaleDateString("pt-BR");
+    ctx.fillText(`Gerado em ${dataAtual}`, largura / 2, altura - 30);
+
+    canvas.toBlob(blob => resolve(blob), "image/png");
+  });
+}
+
 // ===== PÁGINA ISOLADA =====
 function alternarPagina() {
   const overlay = document.getElementById("paginaHistorico");
@@ -352,15 +563,16 @@ function finalizarPartida() {
   atualizarFila();
   atualizarContadores();
   resetarCronometro();
+  salvarEstado();
 }
 
-// estado inicial: Time A começa sacando
-definirSaque("A");
+// estado inicial: restaura jogadores/placar/cronômetro salvos, ou começa do zero
+restaurarEstado();
 
 // ===== REGISTRO DO SERVICE WORKER (deixa o app instalável e offline) =====
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
+    navigator.serviceWorker.register('/sw.js')
       .catch(err => console.log('Erro ao registrar service worker:', err));
   });
 }
