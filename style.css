@@ -501,6 +501,21 @@ button:hover {
   letter-spacing: 0.5px;
 }
 
+/* ===== EXPORTAR / IMPORTAR BACKUP ===== */
+
+.acoes-historico {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.acoes-historico button {
+  flex: 1;
+  font-size: 12px;
+  padding: 10px 8px;
+  background: var(--oceano);
+}
+
 .item-historico {
   background: var(--branco-osso);
   border: 1px solid var(--oceano);
